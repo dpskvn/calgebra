@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on tags like v1.0.0, v2.1.0, etc.
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - deno_target: "x86_64-pc-windows-msvc"
+            ext: ".exe"
+            runner: ubuntu-latest
+          - deno_target: "x86_64-unknown-linux-gnu"
+            ext: ""
+            runner: ubuntu-latest
+          - deno_target: "aarch64-unknown-linux-gnu"
+            ext: ""
+            runner: ubuntu-latest
+          - deno_target: "x86_64-apple-darwin"
+            ext: ""
+            runner: ubuntu-latest
+          - deno_target: "aarch64-apple-darwin"
+            ext: ""
+            runner: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Compile binary for ${{ matrix.deno_target }}
+        run: |
+          deno compile --allow-net --allow-write --target ${{ matrix.deno_target }} -o calgebra-${{ matrix.deno_target }}${{ matrix.ext }} main.ts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calgebra-${{ matrix.deno_target }}
+          path: calgebra-${{ matrix.deno_target }}${{ matrix.ext }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Upload Release Assets
+        run: |
+          # Remove the template part from the URL
+          UPLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
+          UPLOAD_URL="${UPLOAD_URL%\{*}"
+          for file in $(find ./artifacts -type f); do
+            filename=$(basename "$file")
+            echo "Uploading $filename"
+            curl --data-binary @"$file" \
+              -H "Content-Type: application/octet-stream" \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "$UPLOAD_URL?name=$filename"
+          done
